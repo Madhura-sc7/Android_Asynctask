@@ -17,9 +17,10 @@ public class MainActivity extends AppCompatActivity {
     TextView StatusText;
     Button StartButton;
 
-    private ExecutorService BackgroundExecutor;   // runs background work off the UI thread
-    private Handler MainHandler;                  // posts results back to the UI thread
-    private volatile boolean IsCancelled = false;  // lets us stop the loop safely on destroy
+    private ExecutorService BackgroundExecutor;
+    private Handler MainHandler;
+    private volatile boolean IsCancelled = false;
+    private volatile boolean IsTaskRunning = false;   // prevents duplicate task submissions
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -32,10 +33,16 @@ public class MainActivity extends AppCompatActivity {
         BackgroundExecutor = Executors.newSingleThreadExecutor();
         MainHandler = new Handler(Looper.getMainLooper());
 
-        StartButton.setOnClickListener(v -> runBackgroundTask());
+        StartButton.setOnClickListener(v -> RunBackgroundTask());
     }
 
-    private void runBackgroundTask() {
+    private void RunBackgroundTask() {
+        if (IsTaskRunning) {
+            return; // ignore repeated presses while a task is already in progress
+        }
+        IsTaskRunning = true;
+        StartButton.setEnabled(false); // disable button while work is running
+
         StatusText.setText(getString(R.string.status_starting));
 
         BackgroundExecutor.execute(() -> {
@@ -44,10 +51,10 @@ public class MainActivity extends AppCompatActivity {
 
             for (int i = 1; i <= totalSteps; i++) {
                 if (IsCancelled) {
-                    return; // Activity is gone, stop work immediately
+                    return;
                 }
                 try {
-                    Thread.sleep(1000); // pause 1 second, pretending to do heavy work
+                    Thread.sleep(1000);
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     finalResult = getString(R.string.status_interrupted);
@@ -55,9 +62,10 @@ public class MainActivity extends AppCompatActivity {
                 }
 
                 final int progress = i;
+                final int total = totalSteps;
                 MainHandler.post(() -> {
                     if (!IsCancelled) {
-                        StatusText.setText(getString(R.string.status_progress, progress));
+                        StatusText.setText(getString(R.string.status_progress, progress, total));
                     }
                 });
             }
@@ -65,9 +73,9 @@ public class MainActivity extends AppCompatActivity {
             final String resultToShow = finalResult;
             MainHandler.post(() -> {
                 if (!IsCancelled) {
-                    StatusText.setText(resultToShow != null
-                            ? resultToShow.toUpperCase(Locale.getDefault())
-                            : getString(R.string.status_unknown));
+                    StatusText.setText(resultToShow.toUpperCase(Locale.getDefault()));
+                    StartButton.setEnabled(true);  // re-enable button once task finishes
+                    IsTaskRunning = false;
                 }
             });
         });
@@ -76,7 +84,7 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onDestroy() {
         super.onDestroy();
-        IsCancelled = true;          // stop posting UI updates once Activity is destroyed
-        BackgroundExecutor.shutdownNow(); // stop the background thread
+        IsCancelled = true;
+        BackgroundExecutor.shutdownNow();
     }
 }
