@@ -21,34 +21,46 @@ jobs:
 
       - name: Run Codex Android Code Review
         id: run_codex
-        uses: openai/codex-action@v1   # consider pinning to a specific release/commit SHA for security
+        uses: openai/codex-action@v1
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           prompt: |
             You are an experienced Android Java code reviewer.
             Review ONLY the files changed in this pull request.
-            Check for:
-            - Java coding standards and naming conventions
-            - Clean, readable, and maintainable code
-            - Null pointer risks and exception handling
-            - Android best practices (Activity/Fragment lifecycle, Context usage, UI thread)
-            - Unused imports, variables, methods, and duplicate code
-            - Performance issues
-            - Resource leaks and memory leaks
-            - Security issues (hardcoded secrets or sensitive data)
+            Check ONLY naming convention compliance based on this rule table:
+
+            PASCAL CASE (PascalCase) must be used for:
+            - Class names
+            - Function or Method names
+            - Interface names
+            - Global Variable names
+            - Field names
+            - Enumeration names
+            - Exception Class names
+            - Constants
+
+            CAMEL CASE (camelCase) must be used for:
+            - Local Variables
+            - Parameters
+            - Property names
+            - Block Level Variables
+            - Method Level Variables
+
             Ignore:
             - Formatting-only changes
             - Auto-generated files
             - build/
             - .gradle/
-            For EACH issue found, reply in this exact format:
+
+            For EACH naming violation found, reply in this exact format:
             - **Severity:** Critical | High | Medium | Low
               **File:** <filename>
               **Line:** <line number>
-              **Problem:** <one-line description>
-              **Recommendation:** <how to fix it>
+              **Problem:** <which rule was violated, e.g. "Method name not in PascalCase">
+              **Recommendation:** <corrected name following the rule>
               **Code:** `<exact problematic line of code>`
-            If there are NO issues, reply ONLY with:
+
+            If there are NO naming violations, reply ONLY with:
             No issues found. Looks good to merge.
 
       - name: Post Codex review as PR comment
@@ -61,8 +73,11 @@ jobs:
             const output = process.env.CODEX_OUTPUT || "No review content returned. Codex step may have failed - check the workflow logs.";
             const author = context.payload.pull_request.user.login;
             const noIssues = output.toLowerCase().includes("no issues found");
-            const statusIcon = noIssues ? "✅" : "⚠️";
-            const statusText = noIssues ? "No issues found" : "Issues found - please review";
+
+            const statusIcon = noIssues ? "✅" : "❌";
+            const statusText = noIssues
+              ? "Good to merge — no naming convention issues found."
+              : "Blocked — naming convention issues found. Please fix before merging.";
 
             const body = "## Codex Android Review\n" +
               "**Status:** " + statusIcon + " " + statusText + "\n\n" +
@@ -76,16 +91,16 @@ jobs:
               body: body
             });
 
-      - name: Fail check if issues were found
+      - name: Block merge if issues were found
         if: always()
         env:
           CODEX_OUTPUT: ${{ steps.run_codex.outputs.final-message }}
         run: |
           output="$CODEX_OUTPUT"
           if echo "$output" | grep -qi "No issues found"; then
-            echo "No issues found. Check passed."
+            echo "✅ No naming convention issues found. Good to merge."
             exit 0
           else
-            echo "Issues were found by Codex, or the review step failed. Failing the workflow."
+            echo "❌ Naming convention issues found (or the review step failed). Blocking merge."
             exit 1
           fi
