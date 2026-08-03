@@ -51,6 +51,7 @@ public class MainActivity extends AppCompatActivity {
             }
             return "Task Finished!";
         }
+        
 
         @Override
         protected void onProgressUpdate(Integer... values) {
