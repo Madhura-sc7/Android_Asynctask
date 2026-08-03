@@ -1,29 +1,32 @@
-name: Codex PR Review
+name: Codex PR Review   # workflow name shown in GitHub Actions tab
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened]   # runs when PR is opened, updated, or reopened
 
 jobs:
   codex-review:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest   # use a Linux runner
+
     permissions:
-      contents: read
-      pull-requests: write
-      issues: write
+      contents: read          # allow reading repo code
+      pull-requests: write    # allow posting PR comments
+      issues: write           # PR comments use the issues API under the hood
+
     outputs:
-      final_message: ${{ steps.run_codex.outputs.final-message }}
+      final_message: ${{ steps.run_codex.outputs.final-message }}   # expose Codex's result to other steps/jobs
+
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4   # pulls the repo code onto the runner
         with:
-          fetch-depth: 0
+          fetch-depth: 0            # get full git history (needed to diff PR changes)
 
       - name: Run Codex Android Code Review
-        id: run_codex
-        uses: openai/codex-action@v1
+        id: run_codex                    # id used later to read this step's output
+        uses: openai/codex-action@v1     # official Codex GitHub Action
         with:
-          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}   # API key stored in repo secrets
           prompt: |
             You are an experienced Android Java code reviewer.
             Review ONLY the files changed in this pull request.
@@ -53,25 +56,27 @@ jobs:
             - .gradle/
 
             For EACH naming violation found, reply in this exact format:
-            - **Severity:** Critical | High | Medium | Low
-              **File:** <filename>
+            - **File:** <filename>
               **Line:** <line number>
-              **Problem:** <which rule was violated, e.g. "Method name not in PascalCase">
-              **Recommendation:** <corrected name following the rule>
-              **Code:** `<exact problematic line of code>`
+              **Problem:** <which rule was violated>
+              **Recommendation:** <corrected name>
+              **Code:** `<exact problematic line>`
 
             If there are NO naming violations, reply ONLY with:
             No issues found. Looks good to merge.
 
       - name: Post Codex review as PR comment
-        if: always()
-        uses: actions/github-script@v7
+        if: always()                      # run this step even if Codex step failed
+        uses: actions/github-script@v7    # lets us run JS to call GitHub's API
         env:
-          CODEX_OUTPUT: ${{ steps.run_codex.outputs.final-message }}
+          CODEX_OUTPUT: ${{ steps.run_codex.outputs.final-message }}   # pass Codex's result into the script
         with:
           script: |
+            // fallback text if Codex produced nothing
             const output = process.env.CODEX_OUTPUT || "No review content returned. Codex step may have failed - check the workflow logs.";
             const author = context.payload.pull_request.user.login;
+
+            // check if Codex said everything is clean
             const noIssues = output.toLowerCase().includes("no issues found");
 
             const statusIcon = noIssues ? "✅" : "❌";
@@ -79,11 +84,14 @@ jobs:
               ? "Good to merge — no naming convention issues found."
               : "Blocked — naming convention issues found. Please fix before merging.";
 
+            // build the comment text (plain concatenation, not template literal,
+            // so backticks inside Codex's output don't break this script)
             const body = "## Codex Android Review\n" +
               "**Status:** " + statusIcon + " " + statusText + "\n\n" +
               output + "\n\n" +
               "@" + author + " Review complete.";
 
+            // post the comment on the PR
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -92,15 +100,17 @@ jobs:
             });
 
       - name: Block merge if issues were found
-        if: always()
+        if: always()                      # run even if earlier steps failed
         env:
           CODEX_OUTPUT: ${{ steps.run_codex.outputs.final-message }}
         run: |
           output="$CODEX_OUTPUT"
+          # if Codex said "no issues found", pass the check
           if echo "$output" | grep -qi "No issues found"; then
             echo "✅ No naming convention issues found. Good to merge."
             exit 0
           else
+            # otherwise fail the check — this blocks merge if the check is "Required"
             echo "❌ Naming convention issues found (or the review step failed). Blocking merge."
             exit 1
           fi
