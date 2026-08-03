@@ -31,21 +31,24 @@ public class MainActivity extends AppCompatActivity {
         @Override
         protected void onPreExecute() {
             // runs on UI thread, BEFORE background work starts
-            statusText.setText("Starting...");
+            statusText.setText(getString(R.string.status_starting));
         }
 
         @Override
         protected String doInBackground(Void... voids) {
             // runs on a BACKGROUND thread - simulate slow work
-            for (int i = 1; i <= 5; i++) {
+            int totalSteps = 5; // fixed — local variable now in camelCase
+
+            for (int i = 1; i <= totalSteps; i++) {
                 try {
                     Thread.sleep(1000); // pause 1 second, pretending to do heavy work
                 } catch (InterruptedException e) {
-                    e.printStackTrace();
+                    Thread.currentThread().interrupt(); // restore interrupt status
+                    return getString(R.string.status_interrupted); // stop early instead of continuing silently
                 }
                 publishProgress(i); // send progress update back to UI thread
             }
-            return "Task Finished!"; // final result
+            return "Task Finished!";
         }
 
         @Override
@@ -57,7 +60,7 @@ public class MainActivity extends AppCompatActivity {
         @Override
         protected void onPostExecute(String result) {
             // runs on UI thread, AFTER doInBackground finishes
-            statusText.setText(result);
+            statusText.setText(result != null ? result : getString(R.string.status_unknown));
         }
     }
 }
