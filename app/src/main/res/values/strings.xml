@@ -1,5 +1,8 @@
-<string name="status_starting">Starting...</string>
-<string name="status_interrupted">Task Interrupted</string>
-<string name="status_unknown">Unknown result</string>
-<string name="status_finished">Task Finished!</string>
-<string name="status_progress">Working... step %1$d/5</string>
+<resources>
+    <string name="app_name">Asynctask</string>
+    <string name="status_starting">Starting...</string>
+    <string name="status_interrupted">Task Interrupted</string>
+    <string name="status_unknown">Unknown result</string>
+    <string name="status_finished">Task Finished!</string>
+    <string name="status_progress">Working... step %1$d/5</string>
+</resources>
