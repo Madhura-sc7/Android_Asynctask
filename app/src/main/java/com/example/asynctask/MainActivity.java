@@ -37,9 +37,9 @@ public class MainActivity extends AppCompatActivity {
         @Override
         protected String doInBackground(Void... voids) {
             // runs on a BACKGROUND thread - simulate slow work
-            int TotalSteps = 5; // naming violation — local variable should be camelCase (totalSteps)
+            int totalSteps = 5; // fixed — local variable now in camelCase
 
-            for (int i = 1; i <= TotalSteps; i++) {
+            for (int i = 1; i <= totalSteps; i++) {
                 try {
                     Thread.sleep(1000); // pause 1 second, pretending to do heavy work
                 } catch (InterruptedException e) {
