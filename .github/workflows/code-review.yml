@@ -58,9 +58,34 @@ jobs:
           CODEX_OUTPUT: ${{ steps.run_codex.outputs.final-message }}
         with:
           script: |
-            const output = process.env.CODEX_OUTPUT || "No review content returned. Codex step may have failed — check the workflow logs.";
+            const output = process.env.CODEX_OUTPUT || "No review content returned. Codex step may have failed - check the workflow logs.";
             const author = context.payload.pull_request.user.login;
             const noIssues = output.toLowerCase().includes("no issues found");
             const statusIcon = noIssues ? "✅" : "⚠️";
-            const statusText = noIssues
-              ? "No issues found"
+            const statusText = noIssues ? "No issues found" : "Issues found - please review";
+
+            const body = "## Codex Android Review\n" +
+              "**Status:** " + statusIcon + " " + statusText + "\n\n" +
+              output + "\n\n" +
+              "@" + author + " Review complete.";
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              body: body
+            });
+
+      - name: Fail check if issues were found
+        if: always()
+        env:
+          CODEX_OUTPUT: ${{ steps.run_codex.outputs.final-message }}
+        run: |
+          output="$CODEX_OUTPUT"
+          if echo "$output" | grep -qi "No issues found"; then
+            echo "No issues found. Check passed."
+            exit 0
+          else
+            echo "Issues were found by Codex, or the review step failed. Failing the workflow."
+            exit 1
+          fi
