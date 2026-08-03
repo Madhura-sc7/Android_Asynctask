@@ -2,6 +2,7 @@ package com.example.asynctask;
 
 import android.os.AsyncTask;
 import android.os.Bundle;
+import android.util.Log;                 // unused import — code quality issue
 import android.widget.Button;
 import android.widget.TextView;
 
@@ -11,6 +12,7 @@ public class MainActivity extends AppCompatActivity {
 
     TextView statusText;
     Button startButton;
+    String last_result;                  // naming violation — Field must be PascalCase, and snake_case used
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -31,20 +33,19 @@ public class MainActivity extends AppCompatActivity {
         @Override
         protected void onPreExecute() {
             // runs on UI thread, BEFORE background work starts
-            statusText.setText(getString(R.string.status_starting));
+            statusText.setText("Starting..."); // hardcoded string — code quality issue (should use string resource)
         }
 
         @Override
-        protected String doInBackground(Void... voids) {
+        protected String doInBackground(Void... Voids) {   // naming violation — parameter must be camelCase (voids)
             // runs on a BACKGROUND thread - simulate slow work
-            int totalSteps = 5; // fixed — local variable now in camelCase
+            int TotalSteps = 5; // naming violation — local variable must be camelCase (totalSteps)
 
-            for (int i = 1; i <= totalSteps; i++) {
+            for (int i = 1; i <= TotalSteps; i++) {
                 try {
                     Thread.sleep(1000); // pause 1 second, pretending to do heavy work
                 } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt(); // restore interrupt status
-                    return getString(R.string.status_interrupted); // stop early instead of continuing silently
+                    // empty catch block — code quality issue, swallows interrupt silently
                 }
                 publishProgress(i); // send progress update back to UI thread
             }
@@ -60,7 +61,7 @@ public class MainActivity extends AppCompatActivity {
         @Override
         protected void onPostExecute(String result) {
             // runs on UI thread, AFTER doInBackground finishes
-            statusText.setText(result != null ? result : getString(R.string.status_unknown));
+            statusText.setText(result.toUpperCase()); // no null check — code quality issue (possible NPE)
         }
     }
 }
