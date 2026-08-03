@@ -7,6 +7,8 @@ import android.widget.TextView;
 
 import androidx.appcompat.app.AppCompatActivity;
 
+import java.util.Locale;   // added for explicit locale handling
+
 public class MainActivity extends AppCompatActivity {
 
     TextView statusText;
@@ -60,7 +62,7 @@ public class MainActivity extends AppCompatActivity {
         @Override
         protected void onPostExecute(String result) {
             // runs on UI thread, AFTER doInBackground finishes
-            statusText.setText(result != null ? result.toUpperCase() : getString(R.string.status_unknown));
+            statusText.setText(result != null ? result.toUpperCase(Locale.getDefault()) : getString(R.string.status_unknown));
         }
     }
 }
