@@ -2,7 +2,6 @@ package com.example.asynctask;
 
 import android.os.AsyncTask;
 import android.os.Bundle;
-import android.util.Log;          // unused import — should be flagged
 import android.widget.Button;
 import android.widget.TextView;
 
@@ -12,7 +11,6 @@ public class MainActivity extends AppCompatActivity {
 
     TextView statusText;
     Button startButton;
-    String temp_result;            // bad naming convention (should be camelCase)
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -43,7 +41,8 @@ public class MainActivity extends AppCompatActivity {
                 try {
                     Thread.sleep(1000); // pause 1 second, pretending to do heavy work
                 } catch (InterruptedException e) {
-                    // empty catch block — swallows the exception silently, should be flagged
+                    Thread.currentThread().interrupt(); // restore interrupt status
+                    return "Task Interrupted"; // stop early instead of continuing silently
                 }
                 publishProgress(i); // send progress update back to UI thread
             }
@@ -59,7 +58,7 @@ public class MainActivity extends AppCompatActivity {
         @Override
         protected void onPostExecute(String result) {
             // runs on UI thread, AFTER doInBackground finishes
-            statusText.setText(result.toUpperCase()); // no null check on result — potential NPE
+            statusText.setText(result != null ? result : "Unknown result"); // null check to avoid NPE
         }
     }
 }
