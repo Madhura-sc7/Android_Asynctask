@@ -1,18 +1,25 @@
 package com.example.asynctask;
 
-import android.os.AsyncTask;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.widget.Button;
 import android.widget.TextView;
 
 import androidx.appcompat.app.AppCompatActivity;
 
 import java.util.Locale;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class MainActivity extends AppCompatActivity {
 
-    TextView StatusText;   // renamed to PascalCase per naming rule
-    Button StartButton;    // renamed to PascalCase per naming rule
+    TextView StatusText;
+    Button StartButton;
+
+    private ExecutorService BackgroundExecutor;   // runs background work off the UI thread
+    private Handler MainHandler;                  // posts results back to the UI thread
+    private volatile boolean IsCancelled = false;  // lets us stop the loop safely on destroy
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -22,54 +29,54 @@ public class MainActivity extends AppCompatActivity {
         StatusText = findViewById(R.id.statusText);
         StartButton = findViewById(R.id.startButton);
 
-        StartButton.setOnClickListener(v -> {
-            new MyBackgroundTask().execute(); // starts the background task
-        });
+        BackgroundExecutor = Executors.newSingleThreadExecutor();
+        MainHandler = new Handler(Looper.getMainLooper());
+
+        StartButton.setOnClickListener(v -> runBackgroundTask());
     }
 
-    // inner class - defines what happens in background vs on UI
-    // NOTE: AsyncTask is deprecated in modern Android. A safer long-term fix is to
-    // replace this with an ExecutorService + Handler, or Kotlin Coroutines, so the
-    // background work is cancelled automatically when the Activity is destroyed.
-    // Keeping AsyncTask here for now since this is a learning exercise, but flagging
-    // it as a known follow-up item.
-    private class MyBackgroundTask extends AsyncTask<Void, Integer, String> {
+    private void runBackgroundTask() {
+        StatusText.setText(getString(R.string.status_starting));
 
-        @Override
-        protected void onPreExecute() {
-            // runs on UI thread, BEFORE background work starts
-            StatusText.setText(getString(R.string.status_starting));
-        }
-
-        @Override
-        protected String doInBackground(Void... voids) {
-            // runs on a BACKGROUND thread - simulate slow work
+        BackgroundExecutor.execute(() -> {
             int totalSteps = 5;
+            String finalResult = getString(R.string.status_finished);
 
             for (int i = 1; i <= totalSteps; i++) {
+                if (IsCancelled) {
+                    return; // Activity is gone, stop work immediately
+                }
                 try {
                     Thread.sleep(1000); // pause 1 second, pretending to do heavy work
                 } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt(); // restore interrupt status
-                    return getString(R.string.status_interrupted); // stop early instead of continuing silently
+                    Thread.currentThread().interrupt();
+                    finalResult = getString(R.string.status_interrupted);
+                    break;
                 }
-                publishProgress(i); // send progress update back to UI thread
-            }
-            return getString(R.string.status_finished); // now uses string resource
-        }
 
-        @Override
-        protected void onProgressUpdate(Integer... values) {
-            // runs on UI thread, called each time publishProgress() is used
-            if (values != null && values.length > 0) {   // null/empty check before accessing values[0]
-                StatusText.setText(getString(R.string.status_progress, values[0]));
+                final int progress = i;
+                MainHandler.post(() -> {
+                    if (!IsCancelled) {
+                        StatusText.setText(getString(R.string.status_progress, progress));
+                    }
+                });
             }
-        }
 
-        @Override
-        protected void onPostExecute(String result) {
-            // runs on UI thread, AFTER doInBackground finishes
-            StatusText.setText(result != null ? result.toUpperCase(Locale.getDefault()) : getString(R.string.status_unknown));
-        }
+            final String resultToShow = finalResult;
+            MainHandler.post(() -> {
+                if (!IsCancelled) {
+                    StatusText.setText(resultToShow != null
+                            ? resultToShow.toUpperCase(Locale.getDefault())
+                            : getString(R.string.status_unknown));
+                }
+            });
+        });
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        IsCancelled = true;          // stop posting UI updates once Activity is destroyed
+        BackgroundExecutor.shutdownNow(); // stop the background thread
     }
 }
