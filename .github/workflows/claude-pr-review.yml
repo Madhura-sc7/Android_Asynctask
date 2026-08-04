@@ -23,10 +23,21 @@ jobs:
       pull-requests: write    # needed to comment on the PR
       issues: write           # PR comments use the issues API internally
       statuses: write         # needed to set the pass/fail check on the PR
-      id-token: write         # required by claude-code-base-action for auth
+      id-token: write         # required by claude-code-action for auth
 
     steps:
-      # STEP 1: issue_comment events don't include PR branch/commit info,
+      # STEP 1: react with 👀 on the comment so the user knows it was picked up
+      - name: React to comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.reactions.createForIssueComment({
+              owner: context.repo.owner, repo: context.repo.repo,
+              comment_id: context.payload.comment.id,
+              content: "eyes"
+            });
+
+      # STEP 2: issue_comment events don't include PR branch/commit info,
       # so we fetch the PR manually to get its head SHA and branch name
       - name: Get PR details
         id: pr
@@ -40,22 +51,22 @@ jobs:
             core.setOutput('sha', pr.data.head.sha);   // commit hash — used for status check
             core.setOutput('ref', pr.data.head.ref);   // branch name — used to checkout code
 
-      # STEP 2: download the actual PR code onto the runner
+      # STEP 3: download the actual PR code onto the runner
       - name: Checkout PR branch
         uses: actions/checkout@v4
         with:
           ref: ${{ steps.pr.outputs.ref }}   # checkout the PR's branch, not main
           fetch-depth: 0                      # full git history, needed to diff changes
 
-      # STEP 3: send the code diff to Claude API with our review rules
+      # STEP 4: send the code diff to Claude API with our review rules
       - name: Run Claude review
         id: run_claude
-        uses: anthropics/claude-code-base-action@v1   # official Anthropic action
+        uses: anthropics/claude-code-action@v1   # official, actively maintained Anthropic action
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}   # secret set in repo settings
-          allowed_tools: "Read,Bash(git diff:*)"   # read-only — Claude can't edit/commit code
-          max_turns: 3        # caps how many tool calls Claude can make — limits token cost
-          timeout_minutes: 5  # hard stop so a stuck run doesn't burn credits endlessly
+          claude_args: |
+            --allowedTools "Read,Bash(git diff:*)"
+            --max-turns 3
           prompt: |
             You are an Android Java code reviewer. Review ONLY changed files (use git diff).
             Check: PascalCase for classes/methods/fields/constants; camelCase for local vars/params.
@@ -64,7 +75,7 @@ jobs:
             For each issue: **File:**, **Line:**, **Problem:**, **Recommendation:**, **Code:**.
             If nothing found, reply ONLY: No issues found. Looks good to merge.
 
-      # STEP 4: Claude's action outputs a raw JSON log, not plain text.
+      # STEP 5: Claude's action outputs a raw JSON log, not plain text.
       # This step digs into that log and pulls out Claude's final written review.
       - name: Extract review
         id: extract_review
@@ -88,7 +99,7 @@ jobs:
             } catch (e) { core.warning(e.message); }
             core.setOutput('final_message', output);   // pass this text to the next steps
 
-      # STEP 5: post the review text as a PR comment, and set a green/red
+      # STEP 6: post the review text as a PR comment, and set a green/red
       # status check on the PR (this is what merge-blocking rules can require)
       - name: Post comment + set status
         if: always()
@@ -117,7 +128,7 @@ jobs:
               context: 'Claude Android Review'
             });
 
-      # STEP 6: also fail this GitHub Actions job itself if issues were found,
+      # STEP 7: also fail this GitHub Actions job itself if issues were found,
       # so it shows red/green directly in the Actions tab (separate from the status check above)
       - name: Fail job if issues found
         if: always()
