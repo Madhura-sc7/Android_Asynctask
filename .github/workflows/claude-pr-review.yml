@@ -68,6 +68,8 @@ jobs:
           claude_args: |
             --allowedTools "Read,Bash(git diff:*)"
             --max-turns 3
+            --model claude-sonnet-5
+          show_full_output: true   # temporary — shows the real error instead of hiding it
           prompt: |
             You are an Android Java code reviewer. Review ONLY changed files (use git diff).
             Check: PascalCase for classes/methods/fields/constants; camelCase for local vars/params.
