@@ -1,124 +1,126 @@
-name: Codex PR Review   # name shown in the Actions tab
+name: Claude PR Review   # shown in the GitHub Actions tab
 
+# Only listens for comments (not every push/commit) — keeps API usage low
 on:
-  pull_request:
-    types: [opened, synchronize, reopened]   # run on new PRs, new commits, and reopened PRs
+  issue_comment:
+    types: [created]   # fires when any comment is posted on an issue or PR
+
+# If /review is commented twice quickly, cancel the older run instead of
+# running both — avoids wasting credits on duplicate reviews
+concurrency:
+  group: claude-review-${{ github.event.issue.number }}
+  cancel-in-progress: true
 
 jobs:
-  codex-review:
-    runs-on: ubuntu-latest   # Linux runner
+  claude-review:
+    # Job only runs if: comment is on a PR AND comment text contains "/review"
+    # Without this check, EVERY comment on EVERY issue would trigger a run
+    if: github.event.issue.pull_request && contains(github.event.comment.body, '/review')
+    runs-on: ubuntu-latest   # Linux runner provided by GitHub
 
     permissions:
-      contents: read          # read repo code
-      pull-requests: write    # allow posting PR comments
-      issues: write           # PR comments use issues API internally
-
-    outputs:
-      final_message: ${{ steps.run_codex.outputs.final-message }}   # pass Codex's result to later steps
+      contents: read          # needed to check out repo code
+      pull-requests: write    # needed to comment on the PR
+      issues: write           # PR comments use the issues API internally
+      statuses: write         # needed to set the pass/fail check on the PR
+      id-token: write         # required by claude-code-base-action for auth
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4   # download repo code onto runner
-        with:
-          fetch-depth: 0            # get full history to diff PR changes
-
-      - name: Run Codex Android Code Review
-        id: run_codex                    # id to reference this step's output later
-        uses: openai/codex-action@v1     # official Codex action
-        with:
-          openai-api-key: ${{ secrets.OPENAI_API_KEY }}   # API key from repo secrets
-          prompt: |
-            You are an experienced Android Java code reviewer.
-            Review ONLY the files changed in this pull request.
-
-            1) NAMING CONVENTIONS — check against this exact rule table:
-               PASCAL CASE (PascalCase) must be used for:
-               - Class names
-               - Function or Method names
-               - Interface names
-               - Global Variable names
-               - Field names
-               - Enumeration names
-               - Exception Class names
-               - Constants
-
-               CAMEL CASE (camelCase) must be used for:
-               - Local Variables
-               - Parameters
-               - Property names
-               - Block Level Variables
-               - Method Level Variables
-
-            2) CODE QUALITY — also check for:
-               - Clean, readable, and maintainable code
-               - Null pointer risks and missing exception handling
-               - Android best practices (Activity/Fragment lifecycle, Context usage, UI thread)
-               - Unused imports, variables, methods, and duplicate code
-               - Performance issues
-               - Resource leaks and memory leaks
-               - Security issues (hardcoded secrets or sensitive data)
-
-            Ignore:
-            - Formatting-only changes
-            - Auto-generated files
-            - build/
-            - .gradle/
-
-            For EACH issue found (naming OR code quality), reply in this exact format:
-            - **File:** <filename>
-              **Line:** <line number>
-              **Problem:** <what rule/best practice was violated>
-              **Recommendation:** <how to fix it>
-              **Code:** `<exact problematic line of code>`
-
-            If there are NO issues at all, reply ONLY with:
-            No issues found. Looks good to merge.
-
-      - name: Post Codex review as PR comment
-        if: always()                      # run even if Codex step failed
-        uses: actions/github-script@v7    # runs JS to call GitHub's API
-        env:
-          CODEX_OUTPUT: ${{ steps.run_codex.outputs.final-message }}   # bring Codex's output into the script
+      # STEP 1: issue_comment events don't include PR branch/commit info,
+      # so we fetch the PR manually to get its head SHA and branch name
+      - name: Get PR details
+        id: pr
+        uses: actions/github-script@v7
         with:
           script: |
-            // fallback text if Codex gave nothing
-            const output = process.env.CODEX_OUTPUT || "No review content returned. Codex step may have failed - check the workflow logs.";
-            const author = context.payload.pull_request.user.login;
+            const pr = await github.rest.pulls.get({
+              owner: context.repo.owner, repo: context.repo.repo,
+              pull_number: context.payload.issue.number
+            });
+            core.setOutput('sha', pr.data.head.sha);   // commit hash — used for status check
+            core.setOutput('ref', pr.data.head.ref);   // branch name — used to checkout code
 
-            // true if Codex said everything is clean
-            const noIssues = output.toLowerCase().includes("no issues found");
+      # STEP 2: download the actual PR code onto the runner
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.pr.outputs.ref }}   # checkout the PR's branch, not main
+          fetch-depth: 0                      # full git history, needed to diff changes
 
-            const statusIcon = noIssues ? "✅" : "❌";
-            const statusText = noIssues
-              ? "Good to merge — no issues found."
-              : "Blocked — issues found. Please fix before merging.";
+      # STEP 3: send the code diff to Claude API with our review rules
+      - name: Run Claude review
+        id: run_claude
+        uses: anthropics/claude-code-base-action@v1   # official Anthropic action
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}   # secret set in repo settings
+          allowed_tools: "Read,Bash(git diff:*)"   # read-only — Claude can't edit/commit code
+          max_turns: 3        # caps how many tool calls Claude can make — limits token cost
+          timeout_minutes: 5  # hard stop so a stuck run doesn't burn credits endlessly
+          prompt: |
+            You are an Android Java code reviewer. Review ONLY changed files (use git diff).
+            Check: PascalCase for classes/methods/fields/constants; camelCase for local vars/params.
+            Also check: nulls, exceptions, lifecycle/context misuse, unused code, leaks, security.
+            Ignore formatting-only changes, build/, .gradle/.
+            For each issue: **File:**, **Line:**, **Problem:**, **Recommendation:**, **Code:**.
+            If nothing found, reply ONLY: No issues found. Looks good to merge.
 
-            // plain string building (not template literal) so backticks in output don't break this script
-            const body = "## Codex Android Review\n" +
-              "**Status:** " + statusIcon + " " + statusText + "\n\n" +
-              output + "\n\n" +
-              "@" + author + " Review complete.";
+      # STEP 4: Claude's action outputs a raw JSON log, not plain text.
+      # This step digs into that log and pulls out Claude's final written review.
+      - name: Extract review
+        id: extract_review
+        if: always()   # run even if step 3 failed, so we still know something went wrong
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let output = "No review content returned - check workflow logs.";
+            try {
+              const file = '${{ steps.run_claude.outputs.execution_file }}';
+              if (file && fs.existsSync(file)) {
+                const log = JSON.parse(fs.readFileSync(file, 'utf8'));
+                // search from the end — the LAST "result" entry is Claude's final answer
+                for (let i = log.length - 1; i >= 0; i--) {
+                  if (log[i]?.type === 'result' && typeof log[i].result === 'string') {
+                    output = log[i].result; break;
+                  }
+                }
+              }
+            } catch (e) { core.warning(e.message); }
+            core.setOutput('final_message', output);   // pass this text to the next steps
 
-            // post the comment on the PR
+      # STEP 5: post the review text as a PR comment, and set a green/red
+      # status check on the PR (this is what merge-blocking rules can require)
+      - name: Post comment + set status
+        if: always()
+        uses: actions/github-script@v7
+        env:
+          CLAUDE_OUTPUT: ${{ steps.extract_review.outputs.final_message }}
+        with:
+          script: |
+            const output = process.env.CLAUDE_OUTPUT;
+            const noIssues = output.toLowerCase().includes("no issues found");   // check Claude's verdict
+            const body = "## Claude Android Review\n" +
+              (noIssues ? "✅ No issues found." : "❌ Issues found — fix before merging.") +
+              "\n\n" + output;
+
+            // post the review as a normal PR comment
             await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.payload.pull_request.number,
-              body: body
+              owner: context.repo.owner, repo: context.repo.repo,
+              issue_number: context.payload.issue.number, body
             });
 
-      - name: Block merge if issues were found
-        if: always()                      # run even if earlier steps failed
+            // set a status check on the commit — shows up as pass/fail on the PR
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner, repo: context.repo.repo,
+              sha: '${{ steps.pr.outputs.sha }}',
+              state: noIssues ? 'success' : 'failure',
+              context: 'Claude Android Review'
+            });
+
+      # STEP 6: also fail this GitHub Actions job itself if issues were found,
+      # so it shows red/green directly in the Actions tab (separate from the status check above)
+      - name: Fail job if issues found
+        if: always()
         env:
-          CODEX_OUTPUT: ${{ steps.run_codex.outputs.final-message }}
-        run: |
-          output="$CODEX_OUTPUT"
-          # pass the check only if Codex explicitly said no issues
-          if echo "$output" | grep -qi "No issues found"; then
-            echo "✅ No issues found. Good to merge."
-            exit 0
-          else
-            # fail the check — blocks merge if this check is marked "Required"
-            echo "❌ Issues found (or the review step failed). Blocking merge."
-            exit 1
-          fi
+          CLAUDE_OUTPUT: ${{ steps.extract_review.outputs.final_message }}
+        run: echo "$CLAUDE_OUTPUT" | grep -qi "No issues found"   # exits 1 (fail) if text isn't found
