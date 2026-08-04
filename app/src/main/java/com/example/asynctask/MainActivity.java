@@ -1,90 +1,66 @@
 package com.example.asynctask;
 
+import android.os.AsyncTask;
 import android.os.Bundle;
-import android.os.Handler;
-import android.os.Looper;
 import android.widget.Button;
 import android.widget.TextView;
 
 import androidx.appcompat.app.AppCompatActivity;
 
-import java.util.Locale;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-
 public class MainActivity extends AppCompatActivity {
 
-    TextView StatusText;
-    Button StartButton;
-
-    private ExecutorService BackgroundExecutor;
-    private Handler MainHandler;
-    private volatile boolean IsCancelled = false;
-    private volatile boolean IsTaskRunning = false;   // prevents duplicate task submissions
+    TextView statusText;
+    Button startButton;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-        StatusText = findViewById(R.id.statusText);
-        StartButton = findViewById(R.id.startButton);
+        statusText = findViewById(R.id.statusText);
+        startButton = findViewById(R.id.startButton);
 
-        BackgroundExecutor = Executors.newSingleThreadExecutor();
-        MainHandler = new Handler(Looper.getMainLooper());
-
-        StartButton.setOnClickListener(v -> RunBackgroundTask());
-    }
-
-    private void RunBackgroundTask() {
-        if (IsTaskRunning) {
-            return; // ignore repeated presses while a task is already in progress
-        }
-        IsTaskRunning = true;
-        StartButton.setEnabled(false); // disable button while work is running
-
-        StatusText.setText(getString(R.string.status_starting));
-
-        BackgroundExecutor.execute(() -> {
-            int totalSteps = 5;
-            String finalResult = getString(R.string.status_finished);
-
-            for (int i = 1; i <= totalSteps; i++) {
-                if (IsCancelled) {
-                    return;
-                }
-                try {
-                    Thread.sleep(1000);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    finalResult = getString(R.string.status_interrupted);
-                    break;
-                }
-
-                final int progress = i;
-                final int total = totalSteps;
-                MainHandler.post(() -> {
-                    if (!IsCancelled) {
-                        StatusText.setText(getString(R.string.status_progress, progress, total));
-                    }
-                });
-            }
-
-            final String resultToShow = finalResult;
-            MainHandler.post(() -> {
-                if (!IsCancelled) {
-                    StatusText.setText(resultToShow.toUpperCase(Locale.getDefault()));
-                    StartButton.setEnabled(true);  // re-enable button once task finishes
-                    IsTaskRunning = false;
-                }
-            });
+        startButton.setOnClickListener(v -> {
+            new MyBackgroundTask().execute(); // starts the background task
         });
     }
 
-    @Override
-    protected void onDestroy() {
-        super.onDestroy();
-        IsCancelled = true;
-        BackgroundExecutor.shutdownNow();
+    // inner class - defines what happens in background vs on UI
+    private class MyBackgroundTask extends AsyncTask<Void, Integer, String> {
+
+        @Override
+        protected void onPreExecute() {
+            // runs on UI thread, BEFORE background work starts
+            statusText.setText(getString(R.string.status_starting));
+        }
+
+        @Override
+        protected String doInBackground(Void... voids) {
+            // runs on a BACKGROUND thread - simulate slow work
+            int totalSteps = 5; // fixed — local variable now in camelCase
+
+            for (int i = 1; i <= totalSteps; i++) {
+                try {
+                    Thread.sleep(1000); // pause 1 second, pretending to do heavy work
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt(); // restore interrupt status
+                    return getString(R.string.status_interrupted); // stop early instead of continuing silently
+                }
+                publishProgress(i); // send progress update back to UI thread
+            }
+            return "Task Finished!";
+        }
+
+        @Override
+        protected void onProgressUpdate(Integer... values) {
+            // runs on UI thread, called each time publishProgress() is used
+            statusText.setText("Working... step " + values[0] + "/5");
+        }
+
+        @Override
+        protected void onPostExecute(String result) {
+            // runs on UI thread, AFTER doInBackground finishes
+            statusText.setText(result != null ? result : getString(R.string.status_unknown));
+        }
     }
 }
